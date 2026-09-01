@@ -1,0 +1,386 @@
+<!doctype html>
+<!--
+  Collatz / 10^18 — a self-contained virtual scrolling demonstration
+
+  There is deliberately no 76 quintillion-pixel spacer behind this list. Browsers
+  cap element dimensions and scrollTop is a Number, so a conventional tall list
+  cannot address every integer up to 10^18. Instead, JavaScript owns the logical
+  scroll position as:
+
+      { index: BigInt, pixelOffset: Number }
+
+  Entries have different heights because every Collatz value is printed on its own
+  line. Only enough entries to cover the viewport (plus overscan) exist in the DOM.
+  The scrollbar is also custom: its thumb is a visual projection of the BigInt
+  index onto a 0..1 range, and dragging it performs the inverse projection.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Collatz / 10¹⁸</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f5f2ea;
+      --muted: #96948e;
+      --line: rgba(255,255,255,.1);
+      --acid: #c9ff43;
+      --orange: #ff7548;
+      --sequence-line-height: 22px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: #11110f;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    .shell { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    header {
+      min-height: 126px;
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(340px, 560px);
+      gap: 32px;
+      align-items: end;
+      padding: 24px 54px 22px;
+      border-bottom: 1px solid var(--line);
+      background: #11110f;
+      position: relative;
+      z-index: 5;
+    }
+    .eyebrow { color: var(--acid); font: 700 11px/1.2 ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 8px 0 0; font-size: clamp(30px, 4vw, 55px); line-height: .9; letter-spacing: -.055em; font-weight: 650; }
+    h1 span { color: var(--muted); font-weight: 420; }
+    .tools { display: grid; gap: 10px; }
+    .jump { display: flex; gap: 8px; }
+    .jump-field {
+      min-width: 0; flex: 1; display: flex; align-items: center; gap: 10px;
+      border: 1px solid var(--line); background: #191917; border-radius: 8px; padding: 0 13px;
+    }
+    .jump-field label { color: var(--muted); font: 700 10px ui-monospace, monospace; letter-spacing: .12em; }
+    input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); padding: 12px 0; font-family: ui-monospace, monospace; }
+    .go { border: 0; background: var(--acid); color: #11110f; border-radius: 8px; padding: 0 21px; font-weight: 800; cursor: pointer; }
+    .go:hover { filter: brightness(1.08); }
+    .presets { display: flex; gap: 7px; align-items: center; }
+    .preset { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 5px 10px; color: var(--muted); font: 650 10px ui-monospace, monospace; cursor: pointer; }
+    .preset:hover { color: var(--ink); border-color: #55554e; }
+    .hint { margin-left: auto; color: #66655f; font: 10px ui-monospace, monospace; }
+
+    main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 28px; position: relative; }
+    .list-wrap { min-width: 0; display: grid; grid-template-rows: 38px minmax(0, 1fr); }
+    .columns {
+      display: grid; grid-template-columns: minmax(150px, 21%) 95px minmax(0, 1fr);
+      align-items: center; padding: 0 54px; color: #706f69; border-bottom: 1px solid var(--line);
+      font: 700 9px ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase;
+    }
+    #viewport { min-height: 0; position: relative; overflow: hidden; outline: none; touch-action: none; }
+    #rows { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+    .row {
+      min-height: 76px; display: grid; grid-template-columns: minmax(150px, 21%) 95px minmax(0, 1fr);
+      align-items: start; padding: 26px 54px; border-bottom: 1px solid var(--line);
+      position: relative;
+    }
+    .number { min-width: 0; font: 560 clamp(17px, 2vw, 25px)/1 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: -.035em; }
+    .number small { color: #5f5e59; font-size: 10px; margin-right: 14px; letter-spacing: 0; }
+    .steps { font: 760 17px ui-monospace, monospace; color: var(--acid); }
+    .steps.loading { color: #55544f; animation: pulse 1s ease-in-out infinite alternate; }
+    .sequence { color: #aaa8a1; font: 12px/var(--sequence-line-height) ui-monospace, "SFMono-Regular", monospace; }
+    .sequence-value { display: block; height: var(--sequence-line-height); }
+    .arrow { display: inline-block; width: 22px; color: var(--orange); }
+    @keyframes pulse { to { opacity: .35; } }
+
+    .rail { position: relative; border-left: 1px solid var(--line); background: #161614; cursor: pointer; user-select: none; touch-action: none; }
+    .rail::before { content: ""; position: absolute; left: 12px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: #2d2c28; }
+    #thumb { position: absolute; left: 7px; width: 13px; min-height: 46px; border-radius: 7px; background: var(--acid); cursor: grab; will-change: transform; }
+    #thumb:active { cursor: grabbing; }
+    .position {
+      position: absolute; z-index: 3; right: 44px; bottom: 18px; padding: 7px 10px; border: 1px solid var(--line);
+      border-radius: 6px; color: #83817a; background: rgba(17,17,15,.88); backdrop-filter: blur(8px);
+      font: 10px ui-monospace, monospace; pointer-events: none;
+    }
+    .position b { color: var(--ink); font-weight: 600; }
+    @media (max-width: 760px) {
+      header { grid-template-columns: 1fr; gap: 18px; padding: 22px 20px 18px; }
+      .hint { display: none; }
+      .columns, .row { padding-left: 20px; padding-right: 20px; grid-template-columns: minmax(105px, 38%) 62px minmax(0, 1fr); }
+      .columns { grid-template-columns: minmax(105px, 38%) 62px minmax(0, 1fr); }
+      .number small { display: none; }
+      .position { right: 37px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">A finite tour of infinity</div>
+        <h1>COLLATZ <span>/ 10¹⁸</span></h1>
+      </div>
+      <div class="tools">
+        <form class="jump" id="jumpForm">
+          <div class="jump-field">
+            <label for="jumpInput">GO TO</label>
+            <input id="jumpInput" inputmode="numeric" autocomplete="off" value="1" aria-label="Jump to number">
+          </div>
+          <button class="go" type="submit">JUMP</button>
+        </form>
+        <div class="presets">
+          <button class="preset" data-value="1">START</button>
+          <button class="preset" data-value="1000000">10⁶</button>
+          <button class="preset" data-value="1000000000000">10¹²</button>
+          <button class="preset" data-value="1000000000000000000">END</button>
+          <span class="hint">WHEEL · DRAG · ↑ ↓</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="list-wrap">
+        <div class="columns"><span>Integer</span><span>Steps</span><span>Derivation to 1</span></div>
+        <div id="viewport" tabindex="0" aria-label="Virtual Collatz list">
+          <div id="rows"></div>
+        </div>
+      </section>
+      <div class="rail" id="rail" role="scrollbar" aria-controls="viewport" aria-valuemin="1" aria-valuemax="1000000000000000000" aria-valuenow="1">
+        <div id="thumb"></div>
+      </div>
+      <div class="position">INDEX <b id="positionText">1</b> / 1,000,000,000,000,000,000</div>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      /* ----------------------------------------------------------------------
+       * Model and DOM references
+       * ------------------------------------------------------------------- */
+      const MAX = 1_000_000_000_000_000_000n;
+      const MIN_ENTRY_HEIGHT = 76;
+      const ENTRY_PADDING = 52;
+      const SEQUENCE_LINE_HEIGHT = 22;
+      const THUMB_HEIGHT = 46;
+      const viewport = document.querySelector('#viewport');
+      const rows = document.querySelector('#rows');
+      const rail = document.querySelector('#rail');
+      const thumb = document.querySelector('#thumb');
+      const positionText = document.querySelector('#positionText');
+      const jumpInput = document.querySelector('#jumpInput');
+      const jumpForm = document.querySelector('#jumpForm');
+
+      /**
+       * The entire logical scroll position.
+       *
+       * `index` is the number rendered by the first DOM row. It must be a BigInt:
+       * JavaScript Number integers stop being exact at 2^53 - 1, well below 10^18.
+       * `pixelOffset` is how far that first entry has moved above the viewport. Its
+       * range depends on that entry's sequence length, so a Number remains ideal for
+       * smooth wheel and trackpad motion.
+       */
+      const scroll = { index: 1n, pixelOffset: 0 };
+      const cache = new Map([[1n, { steps: 0, values: [1n] }]]);
+      let rafPending = false;
+
+      const format = value => value.toLocaleString('en-US');
+      const clamp = (value, min, max) => value < min ? min : value > max ? max : value;
+
+      /**
+       * Carry complete variable-height entries out of pixelOffset and into index.
+       * Moving backwards requires the preceding entry's height. Calculations are
+       * cached, so revisiting an entry does not repeat the Collatz work.
+       */
+      function normalizeScroll() {
+        while (scroll.index < MAX) {
+          const height = entryHeight(collatz(scroll.index));
+          if (scroll.pixelOffset < height) break;
+          scroll.pixelOffset -= height;
+          scroll.index++;
+        }
+        while (scroll.pixelOffset < 0 && scroll.index > 1n) {
+          scroll.index--;
+          scroll.pixelOffset += entryHeight(collatz(scroll.index));
+        }
+
+        if (scroll.index < 1n) {
+          scroll.index = 1n;
+          scroll.pixelOffset = 0;
+        }
+        if (scroll.index === 1n && scroll.pixelOffset < 0) {
+          scroll.pixelOffset = 0;
+        }
+        if (scroll.index > MAX) {
+          scroll.index = MAX;
+          scroll.pixelOffset = 0;
+        }
+        if (scroll.index === MAX) {
+          const maxOffset = Math.max(0, entryHeight(collatz(MAX)) - viewport.clientHeight);
+          scroll.pixelOffset = Math.min(scroll.pixelOffset, maxOffset);
+        }
+      }
+
+      function scrollByPixels(delta) {
+        scroll.pixelOffset += delta;
+        normalizeScroll();
+        scheduleRender();
+      }
+
+      function jumpTo(value) {
+        scroll.index = clamp(value, 1n, MAX);
+        scroll.pixelOffset = 0;
+        normalizeScroll();
+        scheduleRender();
+      }
+
+      /** Project an exact BigInt index onto the scrollbar's visual 0..1 range. */
+      function ratioFromIndex() {
+        // Number is safe here only because the result is an approximate visual ratio.
+        // It is never used as the canonical list index.
+        return Number(scroll.index - 1n) / Number(MAX - 1n);
+      }
+
+      /** Convert a thumb position back into a logical BigInt index. */
+      function indexFromRatio(ratio) {
+        // Quantize the ratio before BigInt math. 10^9 divisions are far finer than
+        // any pointer can resolve, while avoiding an unsafe Number -> BigInt value.
+        const SCALE = 1_000_000_000n;
+        const part = BigInt(Math.round(clamp(ratio, 0, 1) * Number(SCALE)));
+        return 1n + ((MAX - 1n) * part) / SCALE;
+      }
+
+      /**
+       * Build only enough variable-height entries to cover the visible window.
+       * A translateY handles the offset within the first entry. The number of DOM
+       * nodes varies with sequence length, but remains proportional to the viewport.
+       */
+      function render() {
+        rafPending = false;
+        normalizeScroll();
+        rows.style.transform = `translateY(${-scroll.pixelOffset}px)`;
+        const fragment = document.createDocumentFragment();
+        let n = scroll.index;
+        let coveredHeight = -scroll.pixelOffset;
+        const targetHeight = viewport.clientHeight + MIN_ENTRY_HEIGHT;
+
+        while (n <= MAX && coveredHeight < targetHeight) {
+          const result = collatz(n);
+          const height = entryHeight(result);
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.style.height = `${height}px`;
+          row.innerHTML = `
+            <div class="number"><small>#</small>${format(n)}</div>
+            <div class="steps">${format(result.steps)}</div>
+            <div class="sequence">${result.values.map((value, i) =>
+              `<span class="sequence-value"><span class="arrow">${i ? '↓' : '·'}</span>${format(value)}</span>`
+            ).join('')}</div>`;
+          fragment.append(row);
+          coveredHeight += height;
+          n++;
+        }
+        rows.replaceChildren(fragment);
+
+        // The native scrollTop is never touched. This thumb merely depicts the
+        // current logical index across the full 1..10^18 address space.
+        const travel = Math.max(0, rail.clientHeight - THUMB_HEIGHT);
+        thumb.style.height = `${THUMB_HEIGHT}px`;
+        thumb.style.transform = `translateY(${10 + ratioFromIndex() * Math.max(0, travel - 20)}px)`;
+        positionText.textContent = format(scroll.index);
+        rail.setAttribute('aria-valuenow', String(scroll.index));
+      }
+
+      /** Coalesce high-frequency wheel/pointer events into one render per frame. */
+      function scheduleRender() {
+        if (!rafPending) {
+          rafPending = true;
+          requestAnimationFrame(render);
+        }
+      }
+
+      /**
+       * Compute and cache the complete sequence, which also determines entry height.
+       * BigInt matters here because intermediate 3n + 1 values can exceed the start.
+       */
+      function collatz(start) {
+        if (cache.has(start)) return cache.get(start);
+        let n = start;
+        let steps = 0;
+        const values = [n];
+        while (n !== 1n) {
+          n = n % 2n === 0n ? n / 2n : 3n * n + 1n;
+          steps++;
+          values.push(n);
+        }
+        const result = { steps, values };
+        if (cache.size > 5000) cache.delete(cache.keys().next().value);
+        cache.set(start, result);
+        return result;
+      }
+
+      /** Keep CSS layout and virtual-scroll arithmetic on the same height formula. */
+      function entryHeight(result) {
+        return Math.max(MIN_ENTRY_HEIGHT, ENTRY_PADDING + result.values.length * SEQUENCE_LINE_HEIGHT);
+      }
+
+      viewport.addEventListener('wheel', event => {
+        event.preventDefault();
+        scrollByPixels(event.deltaMode === 1 ? event.deltaY * 18 : event.deltaY);
+      }, { passive: false });
+
+      viewport.addEventListener('keydown', event => {
+        const actions = {
+          ArrowDown: 44, ArrowUp: -44,
+          PageDown: viewport.clientHeight * .9, PageUp: -viewport.clientHeight * .9,
+          Home: 'home', End: 'end'
+        };
+        if (!(event.key in actions)) return;
+        event.preventDefault();
+        if (actions[event.key] === 'home') jumpTo(1n);
+        else if (actions[event.key] === 'end') jumpTo(MAX);
+        else scrollByPixels(actions[event.key]);
+      });
+
+      /* Custom scrollbar interaction. Pointer capture keeps dragging active even
+       * when the pointer briefly leaves the narrow rail. */
+      let dragOffset = 0;
+      function seek(clientY, offset = THUMB_HEIGHT / 2) {
+        const rect = rail.getBoundingClientRect();
+        const top = 10;
+        const travel = Math.max(1, rect.height - THUMB_HEIGHT - 20);
+        jumpTo(indexFromRatio((clientY - rect.top - top - offset) / travel));
+      }
+      rail.addEventListener('pointerdown', event => {
+        dragOffset = event.target === thumb ? event.clientY - thumb.getBoundingClientRect().top : THUMB_HEIGHT / 2;
+        rail.setPointerCapture(event.pointerId);
+        seek(event.clientY, dragOffset);
+      });
+      rail.addEventListener('pointermove', event => {
+        if (rail.hasPointerCapture(event.pointerId)) seek(event.clientY, dragOffset);
+      });
+
+      jumpForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const cleaned = jumpInput.value.replace(/[,_\s]/g, '');
+        if (!/^\d+$/.test(cleaned)) {
+          jumpInput.setCustomValidity('Enter an integer from 1 to 10¹⁸.');
+          jumpInput.reportValidity();
+          return;
+        }
+        jumpInput.setCustomValidity('');
+        jumpTo(BigInt(cleaned));
+        jumpInput.value = String(scroll.index);
+        viewport.focus();
+      });
+      document.querySelectorAll('.preset').forEach(button => button.addEventListener('click', () => {
+        jumpInput.value = button.dataset.value;
+        jumpTo(BigInt(button.dataset.value));
+      }));
+
+      new ResizeObserver(scheduleRender).observe(viewport);
+      render();
+    })();
+  </script>
+</body>
+</html>
