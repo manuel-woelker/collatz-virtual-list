@@ -2,7 +2,15 @@
 
 A self-contained demonstration of a variable-height virtual list spanning every integer from `1` through `10¹⁸`.
 
-Open `index.html` directly in a modern browser. There are no dependencies, build steps, or network requests.
+**Live demo:** <https://manuel-woelker.github.io/collatz-virtual-list/>
+
+Open `index.html` directly in a modern browser for local use. There are no dependencies, build steps, or network requests.
+
+## Deployment
+
+Pushes to `main` are deployed by `.github/workflows/pages.yml`. The workflow uploads the repository as a static Pages artifact and deploys it to the `github-pages` environment.
+
+For the first deployment, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions** if it is not already selected.
 
 ## How it works
 
